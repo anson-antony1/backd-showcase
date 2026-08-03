@@ -120,6 +120,15 @@ which is a third process with the same constraint — it renders from whatever t
 app last wrote, so the write has to be complete and self-sufficient rather than
 something the widget can ask follow-up questions about.
 
+<p align="center">
+  <img src="screenshots/07-home-screen-widget.png" width="300" alt="The Backd widget on the iOS home screen showing a 75% completion ring, a 12-day streak, one commitment left, and proof due at 9:00 PM">
+</p>
+
+That design is visible above: the widget shows a completion ring, streak, what's
+left, and the next proof deadline without the app running at all. With an empty
+container it renders "Open Backd to sync" rather than a stale or invented state —
+which is the right failure mode for a process that can't ask anyone anything.
+
 ### 3. Visual-regression testing for an app that animates
 
 Screens are captured in the simulator against a frozen clock and diffed against
@@ -207,9 +216,12 @@ separately.
 |---|---|---|
 | <img src="screenshots/01-today-streak-progress.png" width="200"><br>Today — streak, daily locks, progress | <img src="screenshots/02-goal-creation.png" width="200"><br>Goal creation | <img src="screenshots/03-proof-requirement.png" width="200"><br>Choosing a proof requirement |
 | <img src="screenshots/04-buddy-profile.png" width="200"><br>Buddy profile and shared goals | <img src="screenshots/05-group-accountability.png" width="200"><br>Group accountability | <img src="screenshots/06-group-challenge.png" width="200"><br>Group challenge |
+| <img src="screenshots/07-home-screen-widget.png" width="200"><br>Home-screen widget | | |
 
-All six are real simulator captures from the visual-regression harness, with
-seeded fixture data — no real user records.
+All are real simulator captures with seeded fixture data — no real user records.
+The six in-app screens come from the visual-regression harness. The widget shot is
+a live home-screen capture with a fixture payload written into the App Group,
+which is exactly the channel the app itself uses.
 
 ## Source access
 
