@@ -7,6 +7,8 @@ consequence you chose in advance.
 I built it solo over about nine weeks. This repo is a walkthrough of the parts I
 think are worth reading — the source itself is private.
 
+**React Native · TypeScript · Swift · PostgreSQL · Deno · Supabase**
+
 <p align="center">
   <img src="screenshots/01-today-streak-progress.png" width="300" alt="Today screen: streak, four daily locks with a 3/4 progress bar, and an active 30-day group challenge">
 </p>
@@ -20,7 +22,7 @@ version 1.0.0.
 
 | | |
 |---|---|
-| Commits | 557, all mine |
+| Commits | 557 |
 | Span | 2026-05-30 → 2026-08-02 (~9 weeks; 386 commits in June) |
 | Code | 76,654 lines across 384 tracked TS/TSX/SQL/Swift files |
 | Screens | 57 |
@@ -209,7 +211,7 @@ separately.
 All six are real simulator captures from the visual-regression harness, with
 seeded fixture data — no real user records.
 
-## Note
+## Source access
 
 The source is private. Happy to walk through any of it in an interview.
 
