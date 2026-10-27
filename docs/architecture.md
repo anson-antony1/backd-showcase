@@ -9,22 +9,22 @@ by one rule: **the client is never trusted with privilege it doesn't need.**
 ┌──────────────────────────────────────────────────────────────────────┐
 │ Client — React Native / Expo, TypeScript                             │
 │                                                                      │
-│   57 screens (expo-router)                                           │
-│   53 service modules in src/services — all Postgres access goes      │
+│   67 screens (expo-router)                                           │
+│   64 service modules in src/services — all Postgres access goes      │
 │     through these, never straight from a component                   │
-│   2 Swift native modules (Screen Time, widget bridge)                │
+│   4 Swift native modules (Screen Time among them)                    │
 │   1 WidgetKit target + 1 DeviceActivityMonitor extension             │
 │                                                                      │
 │   Holds: the anon key and the signed-in user's JWT. Nothing else.    │
 └──────────────────────────────────────────────────────────────────────┘
                 │                                    ▲
-                │ supabase-js, as the end user       │ 9 edge functions,
+                │ supabase-js, as the end user       │ 18 edge functions,
                 │                                    │ service-role
                 ▼                                    │
 ╔══════════════════════ RLS boundary ═══════════════════════════════════╗
 ║ Postgres                                                             ║
-║   43 tables — RLS enabled on every one                               ║
-║   90 distinct policies across 63 migrations                          ║
+║   81 tables — RLS enabled on every one                               ║
+║   110 policies in production, built up across 107 migrations         ║
 ║   SECURITY DEFINER functions for the few operations that must see    ║
 ║     across users (group aggregates, audit writes, rate checks)       ║
 ╚══════════════════════════════════════════════════════════════════════╝
@@ -42,27 +42,30 @@ That forces anything privileged into an edge function:
 | Function | Why it can't be client-side |
 |---|---|
 | `verify-proof` | Holds the vision-provider API key; reads a private storage object; must not be bypassable |
+| `moderate-proof-media` | Writes the verdict that decides whether a friend can ever see a proof photo |
+| `purge-proof-media` | Scheduled; deletes proof photos whose retention window has ended |
 | `send-push` | Needs other users' device tokens |
-| `send-sms` | Holds the SMS provider credential |
 | `send-buddy-invite` | Writes a row for a user who isn't the caller |
-| `revenuecat-webhook` | Authenticates a third party, not a user |
-| `canvas-import` | Holds an encrypted third-party token |
 | `generate-report` | Aggregates across a group |
 | `delete-account` | Must delete rows the caller can no longer select |
-| `coach` | Holds a model API key |
+| `apple-token` | Exchanges Sign in with Apple's one-time code for a token stored service-only |
+| `revenuecat-webhook`, `app-store-notifications` | Authenticate a third party, not a user |
 
 Plus a shared `_shared/` module for the pieces they all need (CORS, auth
 extraction, rate limiting).
 
-`coach` is present in the repo but ships disabled in v1
-(`COACH_V1_ENABLED = false`) — it was cut from the first release, and the code was
-left in place rather than deleted.
+The rest are in the repo but ship switched off: `coach`, `send-sms`,
+`canvas-import` and `email-tips` sit behind flags, and the four stakes
+payment functions run only in Stripe test mode, off by default. A sanity script
+fails the build if app code ever holds a Stripe key or calls Stripe, or if a
+live key appears anywhere in code. Code that was cut from a release was left in
+place rather than deleted.
 
 ## The RLS pattern
 
 Policies are written as `DROP POLICY IF EXISTS` then `CREATE POLICY`, which makes
-every migration re-runnable. Across 63 files that's 100 creates against 92 drops,
-resolving to 90 distinct policy names.
+every migration re-runnable. Across 107 files that's 137 creates against 122
+drops, resolving to 110 policies in production.
 
 Group data is the interesting case, because a row's visibility depends on
 membership in another table rather than on `user_id = auth.uid()`. The naive
@@ -113,7 +116,8 @@ payload is denormalised rather than a set of ids to resolve.
 ## Data flow: a proof submission
 
 1. The client uploads the image to a **private** bucket and inserts a
-   `proof_submissions` row. EXIF and GPS are stripped before upload.
+   `proof_submissions` row. EXIF and GPS are stripped before upload. The image
+   is moderated server-side, and no friend can see it until it passes.
 2. The client checks a local per-user daily AI budget. If exceeded, it never calls
    the function.
 3. `verify-proof` authenticates the caller, authorises them as the proof owner or
@@ -123,8 +127,9 @@ payload is denormalised rather than a set of ids to resolve.
    to the vision model as a data URL. The bucket stays private throughout.
 5. The model's reply is parsed defensively, deterministic hard rules can downgrade
    an `approve`, and the verdict is recorded as an advisory audit row.
-6. A human reviewer sees the proof and the advisory opinion. Their decision is
-   reconciled against the model's, which is how agreement is tracked over time.
+6. The friend reviewing it sees the proof and the advisory opinion, and makes
+   the call. Their decision is reconciled against the model's, which is how
+   agreement is tracked over time.
 
 If any of steps 3–5 fail, the client falls back to an on-device rules engine that
 is structurally incapable of returning `approve` — so degradation can never
