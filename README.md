@@ -1,11 +1,14 @@
 # Backd
 
-An iOS accountability app. You commit to a goal, submit photo or screenshot proof
-by a deadline, and a buddy or group reviews it. Missing a commitment has a
-consequence you chose in advance.
+An iOS accountability app. You set a goal, pick a friend to back you, and prove
+you did it — a photo taken in the app, steps or a workout from Apple Health, or a
+note — and it only counts once your friend approves it. Group goals and
+challenges, streaks with grace days, a private friends feed, a focus timer,
+optional Screen Time app blocking, and an optional AI second look on proof photos.
 
-I built it solo over about nine weeks. This repo is a walkthrough of the parts I
-think are worth reading — the source itself is private.
+I've built it solo since late May 2026, and it's live on the App Store. This repo
+is a walkthrough of the parts I think are worth reading — the source itself is
+private.
 
 **React Native · TypeScript · Swift · PostgreSQL · Deno · Supabase**
 
@@ -15,24 +18,29 @@ think are worth reading — the source itself is private.
 
 ## Status
 
-**TestFlight, build 21.** Not on the App Store. Bundle `com.anson.lockin`,
-version 1.0.0.
+**Live on the App Store** as
+[Backd: Accountability Partner](https://apps.apple.com/app/id6782731742) — free on
+iPhone. Version 1.0.1 (build 46), October 2026; 1.0.2 is in progress. Bundle
+`com.anson.lockin`.
 
 ## Scale
 
+As of October 26, 2026:
+
 | | |
 |---|---|
-| Commits | 557 |
-| Span | 2026-05-30 → 2026-08-02 (~9 weeks; 386 commits in June) |
-| Code | 76,654 lines across 384 tracked TS/TSX/SQL/Swift files |
-| Screens | 57 |
-| Service modules | 53 |
-| Edge functions | 9 Deno functions plus a shared util module |
-| Migrations | 63 |
-| Tables | 43 — every one with RLS enabled |
-| RLS policies | 90 distinct |
-| Tests | 237 cases across 32 suites |
-| CI | 42 invariant-guard scripts; `qa:check` runs 43 steps including typecheck |
+| Commits | 1,082 |
+| Span | 2026-05-30 → 2026-10-26 (~5 months) |
+| Code | 146,072 lines across 750 tracked TS/TSX/SQL/Swift files |
+| Screens | 67 |
+| Service modules | 64 |
+| Native | 4 Swift native modules, plus a WidgetKit target and a Screen Time extension |
+| Edge functions | 18 Deno functions plus a shared util module |
+| Migrations | 107 |
+| Tables | 81 in production — every one with RLS enabled |
+| RLS policies | 110 in production |
+| Tests | 2,033 Vitest cases across 200 files, plus 8 SQL authorization suites |
+| CI | 60 invariant-guard scripts; `qa:check` runs 59 steps including typecheck; 4 GitHub Actions workflows |
 
 Excluding generated files changes the line count by exactly one line
 (`global.d.ts`).
@@ -41,12 +49,12 @@ Excluding generated files changes the line count by exactly one line
 
 ```
 React Native / Expo (TypeScript)
-  57 screens · 53 service modules · 2 Swift native modules · 1 widget target
+  67 screens · 64 service modules · 4 Swift native modules · 2 extension targets
         │
         │  supabase-js, authenticated as the end user
         ▼
 ┌───────────────────────── RLS boundary ─────────────────────────┐
-│  Postgres — 43 tables, RLS on all of them, 90 policies         │
+│  Postgres — 81 tables, RLS on all of them, 110 policies        │
 │  The client never holds a service-role key. Every query it     │
 │  makes is filtered by policy, so a compromised client can      │
 │  only ever see its own rows.                                   │
@@ -54,8 +62,10 @@ React Native / Expo (TypeScript)
         ▲
         │  service-role, server-side only
         │
-9 Deno edge functions — proof verification, push, SMS, invites,
-receipts, canvas import, reports, account deletion
+18 Deno edge functions — proof verification, proof-photo moderation
+and retention, push, invites, reports, Sign in with Apple tokens,
+App Store and purchase notifications, account deletion (a few more
+are in the repo but ship switched off)
 ```
 
 Anything needing privilege a user shouldn't have — reading another user's row,
@@ -68,7 +78,9 @@ version.
 
 ### 1. Proof verification that doesn't trust the model
 
-[`code/verify-proof.ts`](code/verify-proof.ts) · 319 lines
+[`code/verify-proof.ts`](code/verify-proof.ts) · 319 lines (an excerpt from the
+August TestFlight build; the current function is 665 lines, adding a
+media-moderation gate and stricter rules for photos that aren't first-hand)
 
 A vision model looks at proof photos. The whole design assumes it can be wrong or
 manipulated.
@@ -96,10 +108,13 @@ no challenge code was recorded, or the proof arrived after the window closed, an
 `approve` is downgraded to `needs_review`. The model is never the sole gate on a
 hard requirement.
 
-**It's advisory.** The result is written to an audit row as `ai_advisory`, and a
-human review later reconciles against it. Auto-approval requires a genuine
-high-confidence vision result — the offline rules engine is structurally incapable
-of returning `approve` at all, so a degraded path can never approve anything.
+**It's advisory.** The result is written to an audit row as `ai_advisory`, and in
+the shipping app the friend still makes the call; their decision is reconciled
+against the model's. A mode where the AI can approve on its own exists behind a
+flag and stays off until it clears a fixed bar on a sealed test set (at most 3%
+false approvals at the 95% upper bound, across 400+ fakes it has never seen). The
+offline rules engine is structurally incapable of returning `approve` at all, so a
+degraded path can never approve anything.
 
 ### 2. Native iOS past what React Native gives you
 
@@ -147,16 +162,26 @@ This repo's screenshots come from that harness, with seeded fixture data.
 
 ## Security and privacy
 
-- **RLS on all 43 tables**, 90 distinct policies. Written as
+- **RLS on all 81 tables**, 110 policies in production. Written as
   `DROP POLICY IF EXISTS` followed by `CREATE POLICY` so migrations are
-  idempotent — 100 creates against 92 drops across 63 files.
+  idempotent — 137 creates against 122 drops across 107 files.
   [`code/019_group_goals_v1.sql`](code/019_group_goals_v1.sql) shows the
   multi-table pattern for shared group data;
   [`code/063_group_challenges.sql`](code/063_group_challenges.sql) shows where
   `SECURITY DEFINER` is used and why it's confined.
+- **SQL authorization suites.** Eight database-level test suites attack the
+  schema directly — forged buddy links, references to other users' rows,
+  rewritten group-membership references — and assert that Postgres refuses. A
+  GitHub Actions workflow runs them against a database built from zero whenever
+  a migration changes, so a future migration that reopens a hole fails a test
+  instead of shipping. The workflow also runs a negative control: it disables
+  one guard and requires the suites to go red, because a harness that can't fail
+  proves nothing.
 - **Proof photos live in a private bucket.** The edge function mints a 120-second
   signed URL, fetches the image server-side, and passes it to the model as a data
   URL. The bucket is never publicly readable.
+- **Proof photos are moderated before a friend can see them**, and a scheduled
+  function deletes them once their retention window ends.
 - **EXIF and GPS are stripped** from uploads.
 - **Integration tokens are encrypted at rest.**
 - **The audit log is append-only.**
@@ -173,10 +198,10 @@ This repo's screenshots come from that harness, with seeded fixture data.
 
 ## Testing and CI
 
-**237 test cases across 32 suites** (22 unit, 10 integration), 52 `describe`
-blocks, on Vitest.
+**2,033 test cases across 200 files** (172 unit, 18 integration, 10 database)
+on Vitest, plus the 8 SQL authorization suites above.
 
-Separately, **42 invariant-guard scripts**. These are not unit tests. They're
+Separately, **60 invariant-guard scripts**. These are not unit tests. They're
 architecture fitness functions: each one asserts that a safety property still
 holds *in the source*, so a future refactor can't quietly remove it.
 [`code/ai-proof-sanity.js`](code/ai-proof-sanity.js) is the clearest example — it
@@ -187,8 +212,8 @@ adversarial inputs (empty, prose, `"decision":"banana"`, truncated JSON, fenced
 JSON with trailing prose) and asserts none of them can produce an approval. It
 also asserts its own wiring into `qa:check`, so it can't be silently dropped.
 
-`qa:check` runs all 42 plus typecheck. Three GitHub Actions workflows:
-`test.yml`, `secret-scan.yml`, `pages.yml`.
+`qa:check` runs 58 of them plus typecheck. Four GitHub Actions workflows:
+`test.yml`, `secret-scan.yml`, `db-security.yml`, `pages.yml`.
 
 ## What I'd do differently
 
@@ -198,11 +223,11 @@ across 21 commits, and a UI-parity artifact tree grew to thousands of files. The
 repo just being public. A `.gitignore` line at the start would have prevented all
 of it.
 
-**I wrote too many planning documents.** Fifteen-odd top-level markdown files
+**I wrote too many planning documents.** About two dozen top-level markdown files
 tracking status and handoffs. They were useful for resuming work but they went
 stale fast, and consolidating them would have cost less than maintaining them.
 
-**Some migrations should have been squashed.** 63 files with an idempotent
+**Some migrations should have been squashed.** 107 files with an idempotent
 drop-then-create policy pattern is safe, but it means the current schema isn't
 readable from any single file.
 
@@ -218,7 +243,8 @@ separately.
 | <img src="screenshots/04-buddy-profile.png" width="200"><br>Buddy profile and shared goals | <img src="screenshots/05-group-accountability.png" width="200"><br>Group accountability | <img src="screenshots/06-group-challenge.png" width="200"><br>Group challenge |
 | <img src="screenshots/07-home-screen-widget.png" width="200"><br>Home-screen widget | | |
 
-All are real simulator captures with seeded fixture data — no real user records.
+All are real simulator captures from the August TestFlight build, with seeded
+fixture data — no real user records.
 The six in-app screens come from the visual-regression harness. The widget shot is
 a live home-screen capture with a fixture payload written into the App Group,
 which is exactly the channel the app itself uses.
